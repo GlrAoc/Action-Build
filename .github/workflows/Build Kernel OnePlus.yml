@@ -733,7 +733,7 @@ jobs:
           grep -nE '^(REPO_OWNER|REPO_NAME|REPO_BRANCH|KSU_VERSION_API|KSU_VERSION_FULL|VERSION_TAG|GIT_BIN|CURL_BIN)' kernel/Makefile
           echo "::endgroup::"
 
-      - name: Workaround inject missing arch.h (upstream SukiSU-Ultra builtin bug)
+      - name: Workaround fix upstream SukiSU-Ultra builtin breakage (3 patches)
         run: |
           cd kernel_workspace/kernel_platform/KernelSU/kernel || exit 0
           if [ ! -f arch.h ]; then
@@ -843,10 +843,18 @@ jobs:
 
           #endif
           KSU_ARCH_H_EOF
-            echo "injected arch.h ($(wc -l < arch.h) lines)"
+            echo "FIX1 injected arch.h ($(wc -l < arch.h) lines)"
           else
-            echo "arch.h already present"
+            echo "FIX1 arch.h already present"
           fi
+          if ! grep -q 'EVENT_SERVICES' include/uapi/supercall.h; then
+            sed -i 's/^DECLARE(__u32, EVENT_MODULE_MOUNTED, 3);$/&\nDECLARE(__u32, EVENT_SERVICES, 4);/' include/uapi/supercall.h
+            echo "FIX2 added EVENT_SERVICES=4"
+          else
+            echo "FIX2 EVENT_SERVICES already present"
+          fi
+          sed -i '/^    struct selinux_policy \*pol, \*old_pol = selinux_state\.policy;$/d' selinux/rules.c
+          echo "FIX3 removed duplicate pol/old_pol declaration"
       - name: Apply Fake Patches
         if: ${{ github.event.inputs.SUSFS_META != '-1' }}
         run: |
