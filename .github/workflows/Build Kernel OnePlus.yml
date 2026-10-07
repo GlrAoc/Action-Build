@@ -673,6 +673,26 @@ jobs:
           [[ -n "$MANUAL_HASH" ]] && echo "手动指定 hash: $MANUAL_HASH" || echo "手动指定 hash: 未启用"
 
           curl -LSs "https://raw.githubusercontent.com/SukiSU-Ultra/SukiSU-Ultra/${KSU_MANAGER_BRANCH}/kernel/setup.sh" | bash -s "$KSU_BUILTIN_BRANCH"
+
+          # ---- UAPI version alignment patch (2026-10-07) ----
+          # Upstream SukiSU-Ultra/builtin declares KERNEL_SU_UAPI_VERSION = 2 while the
+          # official manager hardcodes 5. Natives.isFullFeatured() requires
+          # kernelUAPIVersion == managerUAPIVersion, so returning 2 makes it always false:
+          # the bottom nav bar (home/settings/modules/superuser) never renders and the
+          # "needs kernel update" banner is pinned. All UAPI features v2..v5 exist in this
+          # tree, so reporting 5 is accurate.
+          echo "::group::Patch KERNEL_SU_UAPI_VERSION 2 -> 5"
+          UAPI_FILE="KernelSU/kernel/include/uapi/supercall.h"
+          for i in $(seq 1 30); do [[ -f "$UAPI_FILE" ]] && break; sleep 1; done
+          if [[ -f "$UAPI_FILE" ]]; then
+            sed -i 's/DECLARE(__u32, KERNEL_SU_UAPI_VERSION, 2);/DECLARE(__u32, KERNEL_SU_UAPI_VERSION, 5);/' "$UAPI_FILE"
+            echo "patched: $UAPI_FILE"
+            grep -n "KERNEL_SU_UAPI_VERSION," "$UAPI_FILE" | head -2
+          else
+            echo "::error::UAPI header not found at $UAPI_FILE"
+            exit 1
+          fi
+          echo "::endgroup::"
           cd ./KernelSU
 
           # 如果指定了手动 hash，就切换到该提交
