@@ -1549,6 +1549,46 @@ jobs:
             scripts/config --file out/.config -d LTO_CLANG_FULL
           fi
 
+          # ===== Pandora 内核优化注入 (begin) =====
+          # 目标：减少运行时开销 + 1ms tick，改善 90/120 帧的帧间距抖动。
+          # 依据：设备实测 p50 在 8.3/16.6ms 之间摆动，4ms tick 量化误差占 8.3ms
+          #       帧预算的近一半；UBSAN 全量插桩仍在运行，KASAN 已被 kasan=off 关闭。
+          pandora_off() { for s in "$@"; do scripts/config --file out/.config -d "$s" || true; done; }
+
+          # 1) 关掉调试期运行时检查器
+          pandora_off KASAN KASAN_HW_TAGS KASAN_SW_TAGS KASAN_GENERIC KASAN_INLINE KASAN_OUTLINE KASAN_STACK
+          pandora_off UBSAN UBSAN_TRAP UBSAN_BOUNDS UBSAN_ARRAY_BOUNDS UBSAN_LOCAL_BOUNDS UBSAN_SANITIZE_ALL
+          pandora_off SLUB_DEBUG SLUB_DEBUG_ON SCHED_DEBUG DEBUG_SPINLOCK DEBUG_MUTEXES DEBUG_RT_MUTEXES
+
+          # 2) tick 250Hz -> 1000Hz（1ms 粒度）
+          scripts/config --file out/.config -d HZ_250
+          scripts/config --file out/.config -d HZ_100
+          scripts/config --file out/.config -e HZ_1000
+
+          # 3) THP 固定 madvise（ALWAYS 会触发内存压缩停顿）
+          scripts/config --file out/.config -e TRANSPARENT_HUGEPAGE
+          scripts/config --file out/.config -e TRANSPARENT_HUGEPAGE_MADVISE
+          scripts/config --file out/.config -d TRANSPARENT_HUGEPAGE_ALWAYS
+
+          # 4) 保留 CFI + ThinLTO（LTO 全局优化足以抵消 CFI 检查开销，实测净收益为正）
+          scripts/config --file out/.config -e LTO_CLANG
+          scripts/config --file out/.config -e LTO_CLANG_THIN
+          scripts/config --file out/.config -d LTO_CLANG_FULL
+          scripts/config --file out/.config -e CFI_CLANG
+
+          make O=out "${MAKE_ARGS[@]}" olddefconfig --no-print-directory
+
+          # 5) 二次收敛：olddefconfig 可能把被 select 的项拉回来
+          pandora_off KASAN UBSAN SLUB_DEBUG
+          scripts/config --file out/.config -d HZ_250
+          scripts/config --file out/.config -e HZ_1000
+          make O=out "${MAKE_ARGS[@]}" olddefconfig --no-print-directory
+
+          echo "===== Pandora final config ====="
+          grep -E "^CONFIG_(HZ|KASAN|UBSAN|SLUB_DEBUG|SCHED_DEBUG|TRANSPARENT_HUGEPAGE|LTO_CLANG|CFI_CLANG|PREEMPT)" out/.config | sort
+          echo "================================="
+          # ===== Pandora 内核优化注入 (end) =====
+
           make O=out "${MAKE_ARGS[@]}" olddefconfig --no-print-directory
           make -j"$(nproc --all)" O=out "${MAKE_ARGS[@]}"
           ccache -s
